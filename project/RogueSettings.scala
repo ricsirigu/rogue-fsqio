@@ -4,27 +4,25 @@ import Keys.{scalaVersion, _}
 
 object RogueSettings {
 
-  val nexus = "https://nexus.groupl.es/"
-  val nexusReleases = "releases" at nexus+"repository/maven-releases/"
-  val nexusSnapshots = "snapshots" at nexus+"repository/maven-snapshots/"
+  val sonatypeReleases = "releases" at "https://oss.sonatype.org/service/local/staging/deploy/maven2"
+  val sonatypeSnapshots = "snapshots" at "https://oss.sonatype.org/content/repositories/snapshots"
 
   lazy val defaultSettings: Seq[Setting[_]] = Seq(
     version := "3.1.4",
-    organization := "me.sgrouples",
+    organization := "com.github.ricsirigu",
     crossScalaVersions := Seq("2.11.11","2.12.2"),
     scalaVersion := "2.11.11",
     isSnapshot := true,
     publishMavenStyle := true,
     publishArtifact in Test := false,
     pomIncludeRepository := { _ => false },
-    publishTo <<= version { v =>
-      if (v.endsWith("-SNAPSHOT"))
-        Some(nexusSnapshots)
-      else
-        Some(nexusReleases)
+    resolvers ++= Seq(sonatypeReleases, sonatypeSnapshots),
+    publishTo <<= version { _.endsWith("SNAPSHOT") match {
+            case true  => Some(sonatypeSnapshots)
+            case false => Some(sonatypeReleases)
+      }
     },
    
-    resolvers ++= Seq(nexusReleases, nexusSnapshots),
     scalacOptions ++= Seq("-deprecation", "-unchecked"), //, "-Xlog-implicit-conversions"),
     scalacOptions <++= scalaVersion map { scalaVersion =>
         scalaVersion.split('.') match {
@@ -32,7 +30,7 @@ object RogueSettings {
             case _ => Seq()
         }
     },
-    credentials += Credentials(Path.userHome / ".ivy2" / ".meweCredentials") ,
+    credentials += Credentials(Path.userHome / ".ivy2" / ".credentials") ,
     testOptions in Test ++= Seq(Tests.Setup(() => MongoEmbedded.start), Tests.Cleanup(()=> MongoEmbedded.stop))
 	)
 }
