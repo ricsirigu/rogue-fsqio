@@ -2,9 +2,10 @@ package me.sgrouples.rogue
 
 import java.nio.{ ByteBuffer, ByteOrder }
 import java.time.{ Instant, LocalDateTime, ZoneOffset }
-import java.util.{ Currency, Locale, UUID }
+import java.util.{ Currency, Locale, TimeZone, UUID }
 
 import me.sgrouples.rogue.enums.ReflectEnumInstance
+import me.sgrouples.rogue.map.{ MapKeyFormat, MapKeyFormats }
 import org.bson._
 import org.bson.types.{ Decimal128, ObjectId }
 import shapeless._
@@ -58,8 +59,14 @@ trait EnumNameFormats {
 
     new BasicBsonFormat[T#Value] with ReflectEnumInstance[T] {
 
-      override def read(b: BsonValue): T#Value =
-        enumeration.withName(b.asString().getValue)
+      override def read(b: BsonValue): T#Value = {
+        try {
+          enumeration.withName(b.asString().getValue)
+        } catch {
+          case e: IllegalArgumentException =>
+            throw new IllegalArgumentException(s"cannot read enum name ${b.asString()} for enum ${enumeration.toString()}", e)
+        }
+      }
 
       override def write(t: T#Value): BsonValue = new BsonString(t.toString)
 
@@ -81,7 +88,12 @@ trait EnumValueFormats {
 
     new BasicBsonFormat[T#Value] with ReflectEnumInstance[T] {
 
-      override def read(b: BsonValue): T#Value = enumeration.apply(b.asNumber().intValue())
+      override def read(b: BsonValue): T#Value = try {
+        enumeration.apply(b.asNumber().intValue())
+      } catch {
+        case e: IllegalArgumentException =>
+          throw new IllegalArgumentException(s"cannot read enum value ${b.asNumber()}, for enum ${enumeration.toString()} ", e)
+      }
 
       override def write(t: T#Value): BsonValue = new BsonInt32(t.id)
 
@@ -177,6 +189,17 @@ trait BaseBsonFormats {
     override def defaultValue: Currency = Currency.getInstance("USD")
   }
 
+  implicit object LocaleBsonFormat extends BasicBsonFormat[Locale] {
+    override def read(b: BsonValue): Locale = {
+      //taken from lift's LocaleField as the simpliest solution, albeit not optimal.
+      //commons-lang LocaleUtils were not able to parse all Locale.getAvailableLocales either.
+      val value = b.asString().getValue
+      Locale.getAvailableLocales.filter(_.toString == value).headOption.getOrElse(defaultValue)
+    }
+    override def write(l: Locale): BsonValue = new BsonString(l.toString)
+    override def defaultValue: Locale = Locale.US
+  }
+
   private def `@@AnyBsonFormat`[T, Tag](implicit tb: BsonFormat[T]): BasicBsonFormat[T @@ Tag] = {
     new BasicBsonFormat[T @@ Tag] {
       override def read(b: BsonValue): T @@ Tag = tag[Tag][T](tb.read(b))
@@ -240,6 +263,12 @@ trait BaseBsonFormats {
     override def defaultValue: Instant = Instant.ofEpochMilli(0)
   }
 
+  implicit object TimeZoneFormat extends BasicBsonFormat[TimeZone] {
+    override def read(b: BsonValue): TimeZone = TimeZone.getTimeZone(b.asString().getValue)
+    override def write(tz: TimeZone): BsonValue = new BsonString(tz.getID)
+    override def defaultValue: TimeZone = TimeZone.getTimeZone("UTC")
+  }
+
   implicit def objectIdSubtypeFormat[Subtype <: ObjectId]: BasicBsonFormat[Subtype] = {
     new BasicBsonFormat[Subtype] {
       override def read(b: BsonValue): Subtype = ObjectIdBsonFormat.read(b).asInstanceOf[Subtype]
@@ -247,9 +276,19 @@ trait BaseBsonFormats {
       override def write(t: Subtype): BsonValue = ObjectIdBsonFormat.write(t)
     }
   }
+
+  implicit object BinaryBsonFormat extends BasicBsonFormat[Array[Byte]] {
+
+    override def read(b: BsonValue): Array[Byte] = b.asBinary().getData
+
+    override def write(t: Array[Byte]): BsonValue = new BsonBinary(t)
+
+    override def defaultValue: Array[Byte] = Array.empty[Byte]
+  }
 }
 
 trait BsonCollectionFormats {
+  requires: MapKeyFormats =>
   import scala.collection.JavaConverters._
 
   private[rogue]type BF[T] = BsonFormat[T]
@@ -361,29 +400,36 @@ trait BsonCollectionFormats {
     override def defaultValue: Option[T] = None
   }
 
-  implicit def mapFormat[K: BsonFormat, V: BsonFormat] = new BsonFormat[Map[K, V]] with BsonArrayReader[Map[K, V]] {
-    implicit val fk = implicitly[BsonFormat[K]]
-    implicit val fv = implicitly[BsonFormat[V]]
-    def write(m: Map[K, V]) = {
-      val doc = new BsonDocument()
-      m.foreach {
-        case (k, v) =>
-          val kv = fk.write(k)
-          val vv = fv.write(v)
-          if (kv.isString && !vv.isNull) doc.append(kv.asString().getValue, vv)
-      }
-      doc
-    }
-    def read(value: BsonValue) = {
-      value.asDocument().asScala.map {
-        case (ks, v) =>
-          (fk.read(new BsonString(ks)), fv.read(v))
-      }(collection.breakOut)
-    }
-    //in general terms, yes, as we don't know keys, but we need 'star' format for values
-    override def flds = Map("*" -> fv)
+  implicit def mapFormat[K: MapKeyFormat, V: BsonFormat]: BsonFormat[Map[K, V]] = {
 
-    override def defaultValue: Map[K, V] = Map.empty
+    new BsonFormat[Map[K, V]] with BsonArrayReader[Map[K, V]] {
+
+      implicit private val kf = implicitly[MapKeyFormat[K]]
+      implicit private val fv = implicitly[BsonFormat[V]]
+
+      def write(m: Map[K, V]): BsonDocument = {
+        val doc = new BsonDocument()
+        m.foreach {
+          case (k, v) =>
+            val kv = kf.write(k)
+            val vv = fv.write(v)
+            if (!vv.isNull) doc.append(kv, vv)
+        }
+        doc
+      }
+
+      def read(value: BsonValue): Map[K, V] = {
+        value.asDocument().asScala.map {
+          case (ks, v) =>
+            (kf.read(ks), fv.read(v))
+        }(collection.breakOut)
+      }
+
+      //in general terms, yes, as we don't know keys, but we need 'star' format for values
+      override def flds = Map("*" -> fv)
+
+      override def defaultValue: Map[K, V] = Map.empty
+    }
   }
 
   //TODO - other collections - see SprayJson viaSeq
@@ -403,7 +449,7 @@ trait BsonCollectionFormats {
 
 }
 
-trait StandardBsonFormats extends BaseBsonFormats with BsonCollectionFormats
+trait StandardBsonFormats extends BaseBsonFormats with BsonCollectionFormats with MapKeyFormats
 
 object BsonFormats extends StandardBsonFormats with BsonFormats
 

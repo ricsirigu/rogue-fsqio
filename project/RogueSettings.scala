@@ -8,35 +8,31 @@ object RogueSettings {
   val sonatypeSnapshots = "snapshots" at "https://oss.sonatype.org/content/repositories/snapshots"
 
   lazy val defaultSettings: Seq[Setting[_]] = Seq(
-    version := "3.1.4",
-    organization := "com.github.ricsirigu",
-    crossScalaVersions := Seq("2.11.11","2.12.2"),
+    version := "3.1.16",
+    organization := "me.sgrouples",
+    crossScalaVersions := Seq("2.11.11","2.12.3"),
     scalaVersion := "2.11.11",
     isSnapshot := true,
     publishMavenStyle := true,
     publishArtifact in Test := false,
     pomIncludeRepository := { _ => false },
-    resolvers ++= Seq(sonatypeReleases, sonatypeSnapshots),
-    publishTo <<= version { _.endsWith("SNAPSHOT") match {
-            case true  => Some(sonatypeSnapshots)
-            case false => Some(sonatypeReleases)
-      }
-    },
+    publishTo := version { v =>
+      if (v.endsWith("-SNAPSHOT"))
+        Some(sonatypeSnapshots)
+      else
+        Some(sonatypeReleases)
+    }.value,
    
+    resolvers ++= Seq(sonatypeReleases, sonatypeSnapshots),
     scalacOptions ++= Seq("-deprecation", "-unchecked"), //, "-Xlog-implicit-conversions"),
-    scalacOptions <++= scalaVersion map { scalaVersion =>
-        scalaVersion.split('.') match {
-            case Array(major, minor, _*) if major.toInt >= 2 && minor.toInt >= 10 => Seq("-feature", "-language:_")
-            case _ => Seq()
-        }
-    },
+    scalacOptions ++= Seq("-feature", "-language:_"),
     credentials += Credentials(Path.userHome / ".ivy2" / ".credentials") ,
     testOptions in Test ++= Seq(Tests.Setup(() => MongoEmbedded.start), Tests.Cleanup(()=> MongoEmbedded.stop))
 	)
 }
 
 object RogueDependencies {
-  val liftVersion = "3.1.0-M3"
+  val liftVersion = "3.1.0"
   val specsVer = "3.8.6"
   val liftDeps = Seq(
     "net.liftweb"              %% "lift-mongodb"    % liftVersion  % "compile" intransitive(),

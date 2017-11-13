@@ -1,7 +1,7 @@
 package me.sgrouples.rogue.cc
 
 import java.time.LocalDateTime
-import java.util.Currency
+import java.util.{ Currency, Locale }
 import java.util.regex.Pattern
 
 import com.mongodb.async.client.MongoDatabase
@@ -394,6 +394,71 @@ class EndToEndBsonAsyncSpec extends FlatSpec with MustMatchers with ScalaFutures
 
     Invoices.where(_.id eqs 2L)
       .fetchAsync().futureValue mustBe Seq(Invoice(2L, "Invoice no. 2", Money(1352.98, EUR)))
+
+  }
+
+  "Map[K, V] field" should "just work" in {
+
+    val counts = Map(ObjectId.get -> 100L)
+
+    val counter = Counter(counts = counts)
+
+    Counters.insertOneAsync(counter).futureValue
+
+    val countsOpt = Counters
+      .where(_.id eqs counter._id)
+      .select(_.counts)
+      .getAsync()
+      .futureValue
+
+    val result: Map[ObjectId, Long] = countsOpt.get
+
+    result mustBe counts
+  }
+
+  "Map[K <: ObjectId, V] field" should "just work" in {
+
+    val counts: Map[CounterId, Long] = Map(tag[Counter](ObjectId.get) -> 100L)
+
+    val counter = TypedCounter(counts = counts)
+
+    TypedCounters.insertOneAsync(counter).futureValue
+
+    val countsOpt = TypedCounters
+      .where(_.id eqs counter._id)
+      .select(_.counts)
+      .getAsync()
+      .futureValue
+
+    val result: Map[CounterId, Long] = countsOpt.get
+
+    result mustBe counts
+  }
+
+  "BinaryBsonFormat" should "just work" in {
+
+    val sample = BinaryData("War, war never changes".getBytes)
+
+    Binaries.insertOneAsync(sample).futureValue
+
+    val seq: Seq[BinaryData] = Binaries.fetchAsync().futureValue
+    seq.map(d => new String(d.data)) must contain("War, war never changes")
+
+  }
+
+  "LocaleBsonFormat & LocaleField" should "just work" in {
+
+    val sample = LocaleData(Locale.CANADA_FRENCH)
+
+    Locales.insertOneAsync(sample).futureValue
+
+    val seq: Seq[Locale] = Locales.where(_.locale eqs Locale.CANADA_FRENCH)
+      .select(_.locale).fetchAsync().futureValue
+    seq must contain(Locale.CANADA_FRENCH)
+
+    Locales.where(_.locale eqs Locale.CANADA_FRENCH).modify(_.locale setTo Locale.CHINESE).updateOneAsync()
+
+    Locales.where(_.locale eqs Locale.CHINESE).existsAsync.futureValue mustBe true
 
   }
 }

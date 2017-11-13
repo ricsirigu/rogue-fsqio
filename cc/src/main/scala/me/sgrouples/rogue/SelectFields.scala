@@ -1,7 +1,7 @@
 package me.sgrouples.rogue
 
 import java.time.{ Instant, LocalDateTime, ZoneOffset }
-import java.util.{ Currency, Date }
+import java.util.{ Currency, Date, Locale }
 
 import io.fsq.field.Field
 import io.fsq.rogue._
@@ -31,7 +31,7 @@ abstract class AbstractListQueryField[F, V, DB, M, CC[X] <: Seq[X]](field: Field
 // - B -
 //abstract class AbstractListQueryField[F, V, DB, M, CC[X] <: Seq[X]](field: Field[CC[F], M])
 
-class CClassSeqQueryField[C, M <: CcMeta[C], O](fld: CClassListField[C, M, O], owner: O) //, toBson: B => BsonValue)
+class CClassSeqQueryField[C, M <: CcMeta[C], O](fld: CField[Seq[C], O] with HasChildMeta[C, M], owner: O) //, toBson: B => BsonValue)
     extends AbstractListQueryField[C, C, BsonValue, O, Seq](fld) {
   override def valueToDB(c: C) = fld.childMeta.write(c)
 
@@ -55,7 +55,7 @@ class CClassSeqQueryField[C, M <: CcMeta[C], O](fld: CClassListField[C, M, O], o
   }
 }
 
-class CClassArrayQueryField[C, M <: CcMeta[C], O](fld: CClassArrayField[C, M, O], owner: O) //, toBson: B => BsonValue)
+class CClassArrayQueryField[C, M <: CcMeta[C], O](fld: HasChildMeta[C, M] with Field[Array[C], O], owner: O) //, toBson: B => BsonValue)
     extends AbstractArrayQueryField[C, C, BsonValue, O, C](fld) {
   override def valueToDB(c: C) = fld.childMeta.write(c)
 
@@ -149,6 +149,14 @@ class CurrencyModifyField[M](field: Field[Currency, M]) extends AbstractModifyFi
   override def valueToDB(v: Currency): BsonString = new BsonString(v.getCurrencyCode)
 }
 
+class LocaleQueryField[M](field: Field[Locale, M]) extends AbstractQueryField[Locale, Locale, BsonString, M](field) {
+  override def valueToDB(v: Locale): BsonString = new BsonString(v.toString)
+}
+
+class LocaleModifyField[M](field: Field[Locale, M]) extends AbstractModifyField[Locale, BsonString, M](field) {
+  override def valueToDB(v: Locale): BsonString = new BsonString(v.toString)
+}
+
 class CClassModifyField[C, M <: CcMeta[C], O](fld: CClassField[C, M, O]) extends AbstractModifyField[C, BsonDocument, O](fld) {
   override def valueToDB(b: C): BsonDocument = fld.childMeta.write(b).asDocument()
 }
@@ -157,7 +165,7 @@ class OptCClassModifyField[C, M <: CcMeta[C], O](fld: OptCClassField[C, M, O]) e
   override def valueToDB(b: C): BsonDocument = fld.childMeta.write(b).asDocument()
 }
 
-class CClassSeqModifyField[C, M <: CcMeta[C], O](fld: CClassListField[C, M, O])
+class CClassSeqModifyField[C, M <: CcMeta[C], O](fld: CField[Seq[C], O] with HasChildMeta[C, M])
     extends AbstractListModifyField[C, BsonDocument, O, Seq](fld) {
   override def valueToDB(b: C): BsonDocument = fld.childMeta.write(b).asDocument()
 
@@ -172,7 +180,7 @@ class CClassSeqModifyField[C, M <: CcMeta[C], O](fld: CClassListField[C, M, O])
 
 }
 
-class CClassArrayModifyField[C, M <: CcMeta[C], O](fld: CClassArrayField[C, M, O])
+class CClassArrayModifyField[C, M <: CcMeta[C], O](fld: CField[Array[C], O] with HasChildMeta[C, M])
     extends AbstractArrayModifyField[C, BsonDocument, O](fld) {
   override def valueToDB(b: C): BsonDocument = fld.childMeta.write(b).asDocument()
 
@@ -209,5 +217,15 @@ class EnumIdModifyField[M, E <: Enumeration#Value](field: Field[E, M])
 object LocalDateTimeToMongo {
   final def ldtToDate(d: LocalDateTime): Date = Date.from(d.toInstant(ZoneOffset.UTC))
   final def instantToDate(d: Instant): Date = Date.from(d)
+}
+
+class BinaryQueryField[M](field: Field[Array[Byte], M]) extends AbstractQueryField[Array[Byte], Array[Byte], Array[Byte], M](field) {
+  override def valueToDB(d: Array[Byte]) = d
+  override def eqs(b: Array[Byte]) = EqClause(field.name, b)
+}
+
+class BinaryModifyField[M](field: Field[Array[Byte], M]) extends AbstractModifyField[Array[Byte], Array[Byte], M](field) {
+  override def valueToDB(d: Array[Byte]) = d
+  override def setTo(b: Array[Byte]) = new ModifyClause(ModOps.Set, field.name -> b)
 }
 

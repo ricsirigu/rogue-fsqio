@@ -71,12 +71,12 @@ class LiftQueryExecutor(
   ): RogueReadSerializer[R] = {
     new RogueReadSerializer[R] {
       override def fromDBObject(dbo: DBObject): R = select match {
-        case Some(MongoSelect(fields, transformer)) if fields.isEmpty =>
+        case Some(MongoSelect(fields, transformer, true, _)) if fields.isEmpty =>
           // A MongoSelect clause exists, but has empty fields. Return null.
           // This is used for .exists(), where we just want to check the number
           // of returned results is > 0.
           transformer(null)
-        case Some(MongoSelect(fields, transformer)) =>
+        case Some(MongoSelect(fields, transformer, _, _)) =>
           val inst = meta.createRecord.asInstanceOf[MongoRecord[_]]
 
           LiftQueryExecutorHelpers.setInstanceFieldFromDbo(inst, dbo, "_id")
@@ -93,12 +93,12 @@ class LiftQueryExecutor(
       }
 
       override def fromDocument(dbo: Document): R = select match {
-        case Some(MongoSelect(fields, transformer)) if fields.isEmpty =>
+        case Some(MongoSelect(fields, transformer, true, _)) if fields.isEmpty =>
           // A MongoSelect clause exists, but has empty fields. Return null.
           // This is used for .exists(), where we just want to check the number
           // of returned results is > 0.
           transformer(null)
-        case Some(MongoSelect(fields, transformer)) =>
+        case Some(MongoSelect(fields, transformer, _, _)) =>
           val inst = meta.createRecord.asInstanceOf[MongoRecord[_]]
 
           LiftQueryExecutorHelpers.setInstanceFieldFromDoc(inst, dbo, "_id")
@@ -231,11 +231,11 @@ object LiftQueryExecutorHelpers {
   }
 
   def fallbackValueFromDoc(dbo: Document, fieldNames: List[String]): Option[_] = {
-    import scala.collection.JavaConversions._
+    import scala.collection.JavaConverters._
     Box.!!(fieldNames.foldLeft(dbo: Object)((obj: Object, fieldName: String) => {
       obj match {
         case dbl: util.ArrayList[_] =>
-          dbl.map(_.asInstanceOf[Document]).map(_.get(fieldName)).toList
+          dbl.asScala.map(_.asInstanceOf[Document]).map(_.get(fieldName)).toList
         case dbo: Document =>
           dbo.get(fieldName)
         case null => null

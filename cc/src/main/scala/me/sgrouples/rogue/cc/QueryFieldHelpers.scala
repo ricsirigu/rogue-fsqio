@@ -1,30 +1,79 @@
 package me.sgrouples.rogue.cc
 
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.{ AtomicBoolean, AtomicInteger }
 
 import me.sgrouples.rogue._
+import me.sgrouples.rogue.cc.debug.Debug
 import org.bson.types.ObjectId
 import shapeless.tag
 import shapeless.tag._
 
 import scala.collection.mutable
+import scala.reflect.runtime.universe
 import scala.reflect.runtime.universe._
 import scala.reflect.{ ClassTag, api }
+import Debug.DefaultImplicits._
+import me.sgrouples.rogue.map.MapKeyFormat
 
 private[cc] sealed trait Marker
 
+private[cc] case class Visited(clazz: Type, fields: Seq[Symbol])
+
+private[cc] case class Ignored(field: Symbol, reason: String)
+
+private[cc] object DebugImplicits {
+
+  implicit class IndentHelper(u: String) {
+    def mkIndent: String = u.replaceAll("(?m)^", "  ")
+  }
+
+  implicit object DebugType extends Debug[Type] {
+    override def show(t: universe.Type): String =
+      t.typeSymbol.fullName
+  }
+
+  implicit object DebugSymbol extends Debug[Symbol] {
+    override def show(t: universe.Symbol): String =
+      t.name.toString
+  }
+
+  implicit object DebugVisited extends Debug[Visited] {
+    override def show(t: Visited): String = t match {
+      case Visited(clazz, Nil) => Debug.debug(clazz)
+      case Visited(clazz, fields) =>
+        s"""${Debug.debug(clazz)}
+           |  ${Debug.debug(fields).mkIndent}"""
+    }
+  }
+
+  implicit object DebugIgnored extends Debug[Ignored] {
+    override def show(t: Ignored): String = t match {
+      case Ignored(field, cause) =>
+        s"""${Debug.debug(field)} ($cause)"""
+    }
+  }
+}
+
 trait QueryFieldHelpers[Meta] extends {
   requires: Meta =>
+
+  private[this] val lock = new Object
 
   private[this] val names: mutable.Map[Int, String] = mutable.Map.empty
 
   private[this] val fields: mutable.Map[String, io.fsq.field.Field[_, _]] = mutable.Map.empty
 
+  private[this] val resolved = new AtomicBoolean(false)
+
   private[this] val nameId = new AtomicInteger(-1)
+
+  private[this] val visitedClasses: mutable.ArrayBuffer[Visited] = mutable.ArrayBuffer.empty
+
+  private[this] val ignoredFields: mutable.ArrayBuffer[Ignored] = mutable.ArrayBuffer.empty
 
   // This one is hacky, we need to find the type tag from Java's getClass method...
 
-  private[this] implicit val typeTag: TypeTag[Meta] = {
+  private[this] implicit def typeTag: TypeTag[Meta] = {
 
     val mirror = runtimeMirror(getClass.getClassLoader)
     val sym = mirror.classSymbol(getClass)
@@ -39,7 +88,7 @@ trait QueryFieldHelpers[Meta] extends {
 
   private[this] def nextNameId = nameId.incrementAndGet()
 
-  private[this] def resolve(): Unit = {
+  private[this] def resolve(): Unit = synchronized {
 
     /*
       The idea of automatic name resolution is taken from Scala's Enumeration,
@@ -54,6 +103,20 @@ trait QueryFieldHelpers[Meta] extends {
 
       val typeArgs = symbol.asMethod.returnType.typeArgs
 
+      if (!typeArgs.exists(_ =:= typeOf[Marker]))
+        ignoredFields += Ignored(
+          symbol,
+          s"!typeArgs.exists(_ =:= typeOf[Marker]), " +
+            s"typeArgs: ${typeArgs.mkString("[", ", ", "]")}"
+        )
+
+      if (!typeArgs.exists(_ <:< typeOf[io.fsq.field.Field[_, _]]))
+        ignoredFields += Ignored(
+          symbol,
+          s"!typeArgs.exists(_ <:< typeOf[io.fsq.field.Field[_, _]]), " +
+            s"typeArgs: ${typeArgs.mkString("[", ", ", "]")}"
+        )
+
       typeArgs.exists(_ =:= typeOf[Marker]) &&
         typeArgs.exists(_ <:< typeOf[io.fsq.field.Field[_, _]])
     }
@@ -67,31 +130,39 @@ trait QueryFieldHelpers[Meta] extends {
     val valuesOfMarkedFieldTypeOnly: Symbol => Boolean = {
       case symbol if symbol.isTerm =>
         symbol.asTerm match {
-          case term if term.isVal =>
+          case term if term.isAccessor =>
             term.getter match {
               case getterSymbol if getterSymbol.isMethod =>
                 returnsMarkedField(getterSymbol.asMethod)
-              case _ => false
+              case s => ignoredFields += Ignored(s, "getter is not a method"); false
             }
-          case _ => false
+          case s => ignoredFields += Ignored(s, "term is not an accessor"); false
         }
-      case _ => false
+      case s => ignoredFields += Ignored(s, "symbol is not a term"); false
     }
 
     /*
       This reverse here is because traits are initialized in opposite order than declared...
      */
 
-    val values = typeOf[Meta].baseClasses.reverse.flatMap {
+    val values = typeOf[Meta](typeTag).baseClasses.reverse.flatMap {
       baseClass =>
-        appliedType(baseClass).decls
+
+        val appType = appliedType(baseClass)
+
+        val fields = appType.decls
           .sorted.filter(valuesOfMarkedFieldTypeOnly)
+
+        visitedClasses += Visited(appType, fields)
+
+        fields
     }.map(decode)
 
     // name map in order of trait linearization
 
     names ++= values.zipWithIndex.map(_.swap)
 
+    resolved.set(true)
   }
 
   /*
@@ -102,13 +173,12 @@ trait QueryFieldHelpers[Meta] extends {
     Its complicated, I know, meta programming usually is... But Miles Sabin's @@ is awesome, don't you think?
    */
 
-  protected def named[T <: io.fsq.field.Field[_, _]](func: String => T): T @@ Marker = {
-    if (names.isEmpty) resolve() // lets try one more time to find those names
+  protected def named[T <: io.fsq.field.Field[_, _]](func: String => T): T @@ Marker = lock.synchronized {
+    if (!resolved.get()) resolve() // lets try one more time to find those names
 
-    val name = names.getOrElse(nextNameId, throw new IllegalStateException(
-      "Something went wrong: couldn't auto-resolve field names, pleace contact author at mikolaj@sgrouples.com\n" +
-        s"was looking for $nextNameId fields: ${names.keys.mkString(",")} class $getClass"
-    ))
+    val nextId = nextNameId
+
+    val name = names.getOrElse(nextId, resolveError(nextId))
 
     val field = func(name)
     if (fields.contains(name)) throw new IllegalArgumentException(s"Field with name $name is already defined")
@@ -116,14 +186,30 @@ trait QueryFieldHelpers[Meta] extends {
     tag[Marker][T](field)
   }
 
-  protected def named[T <: io.fsq.field.Field[_, _]](name: String)(func: String => T): T @@ Marker = {
-    if (names.isEmpty) resolve()
+  protected def named[T <: io.fsq.field.Field[_, _]](name: String)(func: String => T): T @@ Marker = lock.synchronized {
+    if (!resolved.get()) resolve()
     names += nextNameId -> name
     val field = func(name)
     if (fields.contains(name)) throw new IllegalArgumentException(s"Field with name $name is already defined")
     fields += (name -> field)
     tag[Marker][T](field)
   }
+
+  private[cc] def debugInfo(id: Int): String = {
+
+    import DebugImplicits._
+
+    s"""Something went wrong: couldn't auto-resolve field names, pleace contact author at mikolaj@sgrouples.com
+       | Class is ${this.getClass}, implicit type tag is: ${typeTag.tpe}
+       | Was looking for index $id in
+       |${Debug.debug(names.toSeq.sortBy(_._1).map(_._2)).mkIndent}
+       | Classes visited during field resolution:
+       |${Debug.debug(visitedClasses).mkIndent}
+       | Fields not matching predicates:
+       |${Debug.debug(ignoredFields.distinct).mkIndent}""".stripMargin
+  }
+
+  private[this] def resolveError(id: Int): Nothing = throw new IllegalStateException(debugInfo(id))
 
   // utility methods, not sure if they are usefull...
   def fieldByName[T <: io.fsq.field.Field[_, _]](name: String): T = fields(name).asInstanceOf[T]
@@ -309,15 +395,26 @@ trait QueryFieldHelpers[Meta] extends {
 
   protected def ClassListField[C: ClassTag, MC <: CcMeta[C]](mc: MC): CClassListField[C, MC, Meta] @@ Marker = named(new CClassListField[C, MC, Meta](_, mc, this))
   protected def ClassListField[C: ClassTag, MC <: CcMeta[C]](name: String, mc: MC): CClassListField[C, MC, Meta] @@ Marker = named(name)(new CClassListField[C, MC, Meta](_, mc, this))
-  // TODO: OptClassListField?
+
+  protected def OptClassListField[C: ClassTag, MC <: CcMeta[C]](mc: MC): OptCClassListField[C, MC, Meta] @@ Marker = named(new OptCClassListField[C, MC, Meta](_, mc, this))
+  protected def OptClassListField[C: ClassTag, MC <: CcMeta[C]](name: String, mc: MC): OptCClassListField[C, MC, Meta] @@ Marker = named(name)(new OptCClassListField[C, MC, Meta](_, mc, this))
 
   protected def ClassArrayField[C: ClassTag, MC <: CcMeta[C]](mc: MC): CClassArrayField[C, MC, Meta] @@ Marker = named(new CClassArrayField[C, MC, Meta](_, mc, this))
   protected def ClassArrayField[C: ClassTag, MC <: CcMeta[C]](name: String, mc: MC): CClassArrayField[C, MC, Meta] @@ Marker = named(name)(new CClassArrayField[C, MC, Meta](_, mc, this))
-  // TODO: OptClassArrayField?
 
-  protected def MapField[V]: MapField[V, Meta] @@ Marker = named(new MapField[V, Meta](_, this))
-  protected def MapField[V](name: String): MapField[V, Meta] @@ Marker = named(name)(new MapField[V, Meta](_, this))
+  protected def OptClassArrayField[C: ClassTag, MC <: CcMeta[C]](mc: MC): OptCClassArrayField[C, MC, Meta] @@ Marker = named(new OptCClassArrayField[C, MC, Meta](_, mc, this))
+  protected def OptClassArrayField[C: ClassTag, MC <: CcMeta[C]](name: String, mc: MC): OptCClassArrayField[C, MC, Meta] @@ Marker = named(name)(new OptCClassArrayField[C, MC, Meta](_, mc, this))
+
+  protected def MapField[K: MapKeyFormat, V]: MapField[K, V, Meta] @@ Marker = named(new MapField[K, V, Meta](_, this))
+  protected def MapField[K: MapKeyFormat, V](name: String): MapField[K, V, Meta] @@ Marker = named(name)(new MapField[K, V, Meta](_, this))
 
   protected def OptMapField[V]: OptMapField[V, Meta] @@ Marker = named(new OptMapField[V, Meta](_, this))
   protected def OptMapField[V](name: String): OptMapField[V, Meta] @@ Marker = named(name)(new OptMapField[V, Meta](_, this))
+
+  protected def LocaleField: LocaleField[Meta] @@ Marker = named(new LocaleField[Meta](_, this))
+  protected def LocaleField(name: String): LocaleField[Meta] @@ Marker = named(name)(new LocaleField[Meta](_, this))
+
+  protected def OptLocaleField: OptLocaleField[Meta] @@ Marker = named(new OptLocaleField[Meta](_, this))
+  protected def OptLocaleField(name: String): OptLocaleField[Meta] @@ Marker = named(name)(new OptLocaleField[Meta](_, this))
+
 }

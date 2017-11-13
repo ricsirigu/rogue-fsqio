@@ -8,6 +8,7 @@ import shapeless._
 import labelled.{ FieldType, field }
 import me.sgrouples.rogue.cc.CcMeta
 import me.sgrouples.rogue.enums.ReflectEnumInstance
+import me.sgrouples.rogue.map.MapKeyFormat
 import syntax.singleton._
 import record._
 import ops.record._
@@ -93,6 +94,10 @@ class CurrencyField[O](name: String, o: O) extends MCField[Currency, O](name, o)
   override def defaultValue = Currency.getInstance("USD")
 }
 
+class LocaleField[O](name: String, o: O) extends MCField[Locale, O](name, o) {
+  override def defaultValue = Locale.US
+}
+
 class BooleanField[O](name: String, o: O) extends MCField[Boolean, O](name, o) {
   override def defaultValue = false
 }
@@ -153,16 +158,20 @@ class CClassRequiredField[C, MC <: CcMeta[C], O](
   owner: O
 ) extends CClassAbstractRequiredField[C, MC, O](name, childMeta, owner)
 
+trait HasChildMeta[C, MC <: CcMeta[C]] {
+  def childMeta: MC
+}
+
 class CClassListField[C, MC <: CcMeta[C], O](name: String, val childMeta: MC, owner: O)
-    extends MCField[Seq[C], O](name, owner) {
+    extends MCField[Seq[C], O](name, owner) with HasChildMeta[C, MC] {
   override def defaultValue: List[C] = Nil
 }
 
-class CClassArrayField[C: ClassTag, MC <: CcMeta[C], O](name: String, val childMeta: MC, o: O) extends MCField[Array[C], O](name, o) {
+class CClassArrayField[C: ClassTag, MC <: CcMeta[C], O](name: String, val childMeta: MC, o: O) extends MCField[Array[C], O](name, o) with HasChildMeta[C, MC] {
   override def defaultValue = Array.empty[C]
 }
 
-class MapField[V, O](name: String, o: O) extends MCField[Map[String, V], O](name, o) {
+class MapField[K: MapKeyFormat, V, O](name: String, o: O) extends MCField[Map[K, V], O](name, o) {
   override def defaultValue = Map.empty
 }
 
@@ -188,6 +197,7 @@ class OptDoubleField[O](name: String, o: O) extends OCField[Double, O](name, o)
 class OptLocalDateTimeField[O](name: String, o: O) extends OCField[LocalDateTime, O](name, o)
 
 class OptCurrencyField[O](name: String, o: O) extends OCField[Currency, O](name, o)
+class OptLocaleField[O](name: String, o: O) extends OCField[Locale, O](name, o)
 
 class OptInstantField[O](name: String, o: O) extends OCField[Instant, O](name, o)
 class OptBooleanField[O](name: String, o: O) extends OCField[Boolean, O](name, o)
@@ -196,9 +206,9 @@ class OptEnumIdField[T <: Enumeration, O](name: String, o: O) extends OCField[T#
 class OptListField[V, O](name: String, o: O) extends OCField[List[V], O](name, o)
 class OptArrayField[V: ClassTag, O](name: String, o: O) extends OCField[Array[V], O](name, o)
 class OptCClassField[C, MC <: CcMeta[C], O](name: String, val childMeta: MC, owner: O)
-  extends OCField[C, O](name, owner)
-class OptCClassListField[C, O](name: String, o: O) extends OCField[List[C], O](name, o)
-class OptCClassArrayField[C: ClassTag, O](name: String, o: O) extends OCField[Array[C], O](name, o)
+  extends OCField[C, O](name, owner) with HasChildMeta[C, MC]
+class OptCClassListField[C, MC <: CcMeta[C], O](name: String, val childMeta: MC, o: O) extends OCField[Seq[C], O](name, o) with HasChildMeta[C, MC]
+class OptCClassArrayField[C: ClassTag, MC <: CcMeta[C], O](name: String, val childMeta: MC, o: O) extends OCField[Array[C], O](name, o) with HasChildMeta[C, MC]
 class OptMapField[V, O](name: String, o: O) extends OCField[Map[String, V], O](name, o)
 
 trait CcFields[T] {
