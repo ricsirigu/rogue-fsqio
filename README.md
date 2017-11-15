@@ -34,3 +34,10 @@ a heritage from Lift Active record, and might be changed in the future.
 2. Create `RCcMeta[CC]` object with definition of your fields. They must match case class fields
 
 3. Create connection to Mongo and put it on
+
+
+## Publishing
+
+`+ sbt publishSigned`
+
+`+ sbt sonatypeRelease`
