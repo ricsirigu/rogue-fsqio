@@ -8,8 +8,17 @@ object RogueSettings {
   val sonatypeSnapshots = "snapshots" at "https://oss.sonatype.org/content/repositories/snapshots"
 
   lazy val defaultSettings: Seq[Setting[_]] = Seq(
-    version := "3.1.16",
-    organization := "me.sgrouples",
+    version := "3.1.17",
+    organization := "com.github.ricsirigu",
+	homepage := Some(url("https://github.com/ricsirigu/lift-omniauth")),
+	scmInfo := Some(ScmInfo(
+	  url("https://github.com/ricsirigu/rogue-fsqio"), "git@github.com:ricsirigu/rogue-fsqio.git")
+	),
+	developers += Developer("ricsirigu",
+	  "ricsirigu",
+	  "me@riccardosirigu.com",
+	  url("https://github.com/ricsirigu")),
+	licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
     crossScalaVersions := Seq("2.11.11","2.12.3"),
     scalaVersion := "2.11.11",
     isSnapshot := true,
@@ -22,7 +31,6 @@ object RogueSettings {
       else
         Some(sonatypeReleases)
     }.value,
-   
     resolvers ++= Seq(sonatypeReleases, sonatypeSnapshots),
     scalacOptions ++= Seq("-deprecation", "-unchecked"), //, "-Xlog-implicit-conversions"),
     scalacOptions ++= Seq("-feature", "-language:_"),
@@ -32,7 +40,7 @@ object RogueSettings {
 }
 
 object RogueDependencies {
-  val liftVersion = "3.1.0"
+  val liftVersion = "3.1.1"
   val specsVer = "3.8.6"
   val liftDeps = Seq(
     "net.liftweb"              %% "lift-mongodb"    % liftVersion  % "compile" intransitive(),
