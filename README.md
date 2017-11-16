@@ -4,7 +4,7 @@
 
 Rogue is a type-safe internal Scala DSL for constructing and executing find and modify commands against
 MongoDB in the Lift web framework. Originally developed by [Foursquare](http://github.com/foursquare/rogue), then re-published 
-as part of Foursquare [monorepo]((http://github.com/foursquare/fsqio)
+as part of Foursquare [monorepo](http://github.com/foursquare/fsqio)
 
 ## Sgrouples changes to the original
 
