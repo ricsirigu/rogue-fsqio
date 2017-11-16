@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/ricsirigu/rogue-fsqio.svg?branch=master)](https://travis-ci.org/ricsirigu/rogue-fsqio)
+
 # Rogue
 
 Rogue is a type-safe internal Scala DSL for constructing and executing find and modify commands against
